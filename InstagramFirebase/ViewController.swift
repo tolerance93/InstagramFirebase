@@ -10,12 +10,37 @@ import UIKit
 import Firebase
 import FirebaseAuth
 
-class ViewController: UIViewController {
+class ViewController: UIViewController, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     let plusPhoButton: UIButton = {
         let button = UIButton(type: .system)
         button.setImage(UIImage(named: "plus_photo")?.withRenderingMode(.alwaysOriginal), for: .normal)
+        button.addTarget(self, action: #selector(handlePlusPhoto), for: .touchUpInside)
         return button
     }()
+    
+    @objc func handlePlusPhoto() {
+        let imagePickerController = UIImagePickerController()
+        imagePickerController.delegate = self
+        imagePickerController.allowsEditing = true
+        present(imagePickerController, animated: true, completion: nil)
+    }
+    
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+        
+        if let editedImage = info[UIImagePickerController.InfoKey.editedImage] as? UIImage {
+            plusPhoButton.setImage(editedImage.withRenderingMode(.alwaysOriginal), for: .normal)
+        } else if let originalImage = info[UIImagePickerController.InfoKey.originalImage] as? UIImage {
+            plusPhoButton.setImage(originalImage.withRenderingMode(.alwaysOriginal), for: .normal)
+        }
+        
+        plusPhoButton.layer.cornerRadius = plusPhoButton.frame.width/2
+        plusPhoButton.layer.masksToBounds = true
+        plusPhoButton.layer.borderColor = UIColor.black.cgColor
+        plusPhoButton.layer.borderWidth = 3
+        
+        //print(originalImage.size, editedImage.size)
+        dismiss(animated: true, completion: nil)
+    }
     
     let emailTextField: UITextField = {
         let tf = UITextField()
@@ -79,14 +104,60 @@ class ViewController: UIViewController {
         guard let username = usernameTextField.text, !username.isEmpty else {return}
         guard let password = passwordTextField.text, !password.isEmpty else {return}
         
-        Auth.auth().createUser(withEmail: email, password: password) { (user, error: Error?) in
+        //completion block에서는 self. 필요
+        Auth.auth().createUser(withEmail: email, password: password, completion: { (user, error: Error?) in
             
             if let err = error {
                 print("Failed to create user:", err)
                 return
             }
-            print ("Successfullly created user:", user?.user.uid ?? "")
-        }
+            
+            print("Successfully created user:", user?.user.uid ?? "")
+            
+            guard let image = self.plusPhoButton.imageView?.image else { return }
+            
+            guard let uploadData = image.jpegData(compressionQuality: 0.3) else { return }
+            
+            //random string name으로 child node를 생성하기 위해서
+            let filename = NSUUID().uuidString
+            
+            let storageRef = Storage.storage().reference().child("profile_images").child(filename)
+            storageRef.putData(uploadData, metadata: nil, completion: { (metadata, err) in
+                
+                if let err = err {
+                    print("Failed to upload profile image:", err)
+                    return
+                }
+                
+                // Firebase 5 Update: Must now retrieve downloadURL
+                storageRef.downloadURL(completion: { (downloadURL, err) in
+                    if let err = err {
+                        print("Failed to fetch downloadURL:", err)
+                        return
+                    }
+                    
+                    guard let profileImageUrl = downloadURL?.absoluteString else { return }
+                    
+                    print("Successfully uploaded profile image:", profileImageUrl)
+                    
+                    guard let uid = user?.user.uid else { return }
+                    
+                    let dictionaryValues = ["username": username, "profileImageUrl": profileImageUrl]
+                    let values = [uid: dictionaryValues]
+                    
+                    Database.database().reference().child("users").updateChildValues(values, withCompletionBlock: { (err, ref) in
+                        
+                        if let err = err {
+                            print("Failed to save user info into db:", err)
+                            return
+                        }
+                        
+                        print("Successfully saved user info to db")
+                        
+                    })
+                })
+            })
+        })
     }
 
     override func viewDidLoad() {
